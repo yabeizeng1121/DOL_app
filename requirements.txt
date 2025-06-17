@@ -4,3 +4,7 @@ openpyxl
 python-docx
 PyPDF2
 docx2pdf
+pythoncom
+docx
+io
+tempfile
