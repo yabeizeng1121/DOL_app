@@ -1,7 +1,5 @@
-streamlit>=1.22.0
-pandas>=1.4.0
-openpyxl>=3.0.0
-python-docx>=0.8.11
-docx2pdf>=0.1.8
-PyPDF2>=3.0.0
-pywin32>=306
+streamlit
+pandas
+openpyxl
+python-docx
+PyPDF2
