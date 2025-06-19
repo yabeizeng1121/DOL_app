@@ -3,3 +3,4 @@ pandas
 pdfkit
 openpyxl
 PyPDF2
+shutil

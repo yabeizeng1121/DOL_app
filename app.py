@@ -5,10 +5,14 @@ from io import BytesIO
 import tempfile
 import os
 from PyPDF2 import PdfMerger
+import shutil
 
-# 配置 wkhtmltopdf 路径（适用于 Streamlit Cloud）
-# WKHTMLTOPDF_PATH = "/usr/bin/wkhtmltopdf"
-# CONFIG = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_PATH)
+# Dynamically find wkhtmltopdf path
+path_wkhtmltopdf = shutil.which("wkhtmltopdf")
+if path_wkhtmltopdf is None:
+    raise OSError("wkhtmltopdf not found in PATH")
+
+config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
 
 st.title("📦 UniUni Combined Bill of Lading PDF Generator")
 
@@ -71,7 +75,7 @@ def generate_combined_pdf(excel_file, html_file, full_date, short_date):
                 filled_html,
                 output_pdf_path,
                 options={"enable-local-file-access": None},
-                configuration=CONFIG,
+                configuration=config,
             )
 
             with open(output_pdf_path, "rb") as f:
