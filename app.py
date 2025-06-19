@@ -1,116 +1,130 @@
 import streamlit as st
 import pandas as pd
-import pdfkit
+from docx import Document
 from io import BytesIO
 import tempfile
 import os
+import subprocess
 from PyPDF2 import PdfMerger
-import shutil
-
-# Dynamically find wkhtmltopdf path
-path_wkhtmltopdf = shutil.which("wkhtmltopdf")
-if path_wkhtmltopdf is None:
-    raise OSError("wkhtmltopdf not found in PATH")
-
-config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
-
-st.title("📦 UniUni Combined Bill of Lading PDF Generator")
-
-if "last_excel" not in st.session_state:
-    st.session_state.last_excel = None
-if "last_template" not in st.session_state:
-    st.session_state.last_template = None
-if "last_date" not in st.session_state:
-    st.session_state.last_date = None
-
-ship_date = st.date_input("📅 Enter Ship Date (MM/DD/YYYY)")
-uploaded_excel = st.file_uploader("📄 Upload Pickup Plan Excel File", type=["xlsx"])
-uploaded_template = st.file_uploader("📄 Upload HTML Template File", type=["html"])
-
-if (
-    uploaded_excel != st.session_state.last_excel
-    or uploaded_template != st.session_state.last_template
-    or ship_date != st.session_state.last_date
-):
-    st.cache_data.clear()
-    st.session_state.last_excel = uploaded_excel
-    st.session_state.last_template = uploaded_template
-    st.session_state.last_date = ship_date
 
 
-@st.cache_data(show_spinner="⏳ Generating PDF...")
-def generate_combined_pdf(excel_file, html_file, full_date, short_date):
-    df = pd.read_excel(excel_file)
-    required_columns = ["Address", "Phone", "Note", "DSP"]
-    if not all(col in df.columns for col in required_columns):
-        return None, f"❌ Excel is missing required columns: {required_columns}"
+# Replace placeholders in paragraphs & tables
+def replace_all_text(doc, replacements):
+    for para in doc.paragraphs:
+        runs = para.runs
+        text = "".join(r.text for r in runs)
+        for key, val in replacements.items():
+            if key in text:
+                text = text.replace(key, val)
+                for r in runs:
+                    r.text = ""
+                if runs:
+                    runs[0].text = text
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    runs = para.runs
+                    text = "".join(r.text for r in runs)
+                    for key, val in replacements.items():
+                        if key in text:
+                            text = text.replace(key, val)
+                            for r in runs:
+                                r.text = ""
+                            if runs:
+                                runs[0].text = text
 
-    html_template = html_file.read().decode("utf-8")
 
+st.set_page_config(page_title="UniUni BOL DOCX→PDF", layout="wide")
+st.title("📄→📦 BOL Generator (DOCX→PDF via LibreOffice)")
+
+ship_date = st.date_input("📅 Enter Ship Date")
+uploaded_excel = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+uploaded_docx = st.file_uploader("Upload Word Template (.docx)", type=["docx"])
+
+
+@st.cache_data(show_spinner="⏳ Generating Combined PDF…")
+def generate_combined_pdf(excel_bytes, docx_bytes, ship_date_str):
+    df = pd.read_excel(BytesIO(excel_bytes))
+    needed = {"Address", "Phone", "Note", "DSP"}
+    missing = needed - set(df.columns)
+    if missing:
+        return None, f"❌ Excel missing columns: {sorted(missing)}"
+
+    pdf_paths = []
     with tempfile.TemporaryDirectory() as tmpdir:
-        pdfs = []
+        total = len(df)
+        # Save template once per run to disk
+        tpl_path = os.path.join(tmpdir, "template.docx")
+        with open(tpl_path, "wb") as f:
+            f.write(docx_bytes)
 
         for idx, row in df.iterrows():
-            address = str(row["Address"])
-            phone = str(row["Phone"])
-            note = str(row["Note"])
-            dsp = str(row["DSP"]).replace("/", "_").replace("\\", "_")
             seq = idx + 1
+            # load and replace
+            doc = Document(tpl_path)
+            reps = {
+                "SEA-[pickup address]+TEPHONE+NOTE": f"SEA - {row['Address']} | TEL: {row['Phone']} | Note: {row['Note']}",
+                "UNI-SEA-PICKUP-MM/DD/YYYY-SEQ": f"UNI-SEA-PICKUP-{ship_date_str}-{seq}",
+                "Carrier Name: GN GREENWHEELS INC.": f"Carrier Name: GN GREENWHEELS INC. - {row['DSP']}",
+                "Ship_date": ship_date_str,
+            }
+            replace_all_text(doc, reps)
 
-            filled_html = html_template.replace(
-                "SEA-[pickup address]+TEPHONE+NOTE",
-                f"SEA - {address} | TEL: {phone} | Note: {note}",
-            )
-            filled_html = filled_html.replace(
-                "UNI-SEA-PICKUP-MM/DD/YYYY-SEQ", f"UNI-SEA-PICKUP-{full_date}-{seq}"
-            )
-            filled_html = filled_html.replace(
-                "Carrier Name: GN GREENWHEELS INC.",
-                f"Carrier Name: GN GREENWHEELS INC. - {dsp}",
-            )
-            filled_html = filled_html.replace("Ship_date", short_date)
+            # write filled docx
+            out_docx = os.path.join(tmpdir, f"{seq}.docx")
+            out_pdf = out_docx.replace(".docx", ".pdf")
+            doc.save(out_docx)
 
-            output_pdf_path = os.path.join(tmpdir, f"{seq}_{dsp}.pdf")
-            pdfkit.from_string(
-                filled_html,
-                output_pdf_path,
-                options={"enable-local-file-access": None},
-                configuration=config,
-            )
+            # convert to PDF via LibreOffice
+            try:
+                subprocess.run(
+                    [
+                        "soffice",
+                        "--headless",
+                        "--convert-to",
+                        "pdf",
+                        out_docx,
+                        "--outdir",
+                        tmpdir,
+                    ],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+            except subprocess.CalledProcessError as e:
+                err = e.stderr.decode("utf-8", errors="ignore")
+                return None, f"❌ Conversion failed on row {seq}: {err}"
+            if not os.path.exists(out_pdf):
+                return None, f"❌ PDF not created for row {seq}"
 
-            with open(output_pdf_path, "rb") as f:
-                pdfs.append(f.read())
+            pdf_paths.append(out_pdf)
+            st.info(f"✅ Page {seq}/{total} done")
 
-        merged = PdfMerger()
-        for i, pdf_bytes in enumerate(pdfs):
-            temp_pdf_path = os.path.join(tmpdir, f"temp_{i}.pdf")
-            with open(temp_pdf_path, "wb") as temp_pdf:
-                temp_pdf.write(pdf_bytes)
-            merged.append(temp_pdf_path)
-
-        output = BytesIO()
-        merged.write(output)
-        merged.close()
-        output.seek(0)
-        return output, None
+        # merge all PDFs
+        merger = PdfMerger()
+        for p in pdf_paths:
+            merger.append(p)
+        combined = BytesIO()
+        merger.write(combined)
+        merger.close()
+        combined.seek(0)
+        return combined, None
 
 
-if uploaded_excel and uploaded_template and ship_date:
-    full_date = ship_date.strftime("%m/%d/%Y")
-    short_date = ship_date.strftime("%m/%d/%y")
-
+if ship_date and uploaded_excel and uploaded_docx:
+    full_str = ship_date.strftime("%m/%d/%Y")
     if st.button("🚀 Generate Combined PDF"):
-        pdf_result, error_msg = generate_combined_pdf(
-            uploaded_excel, uploaded_template, full_date, short_date
+        pdf_bytes, err = generate_combined_pdf(
+            uploaded_excel.read(), uploaded_docx.read(), full_str
         )
-
-        if error_msg:
-            st.error(error_msg)
+        if err:
+            st.error(err)
         else:
-            st.success("✅ Combined PDF generated successfully!")
+            st.success("✅ Ready!")
             st.download_button(
-                label="📥 Download Combined PDF",
-                data=pdf_result,
+                "📥 Download All BOLs PDF",
+                data=pdf_bytes,
                 file_name="All_BOLs_Combined.pdf",
                 mime="application/pdf",
             )

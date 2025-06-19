@@ -1,5 +1,5 @@
 streamlit
 pandas
-pdfkit
-PyPDF2
 openpyxl
+python-docx
+PyPDF2
