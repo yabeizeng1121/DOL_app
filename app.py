@@ -8,61 +8,55 @@ import subprocess
 from PyPDF2 import PdfMerger
 
 
-# Replace placeholders in paragraphs & tables
-def replace_all_text(doc, replacements):
+# Helper to replace placeholders in paragraphs & tables
+def replace_all_text(doc, reps):
     for para in doc.paragraphs:
         runs = para.runs
-        text = "".join(r.text for r in runs)
-        for key, val in replacements.items():
-            if key in text:
-                text = text.replace(key, val)
+        txt = "".join(r.text for r in runs)
+        for k, v in reps.items():
+            if k in txt:
+                txt = txt.replace(k, v)
                 for r in runs:
                     r.text = ""
-                if runs:
-                    runs[0].text = text
+                runs[0].text = txt
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for para in cell.paragraphs:
                     runs = para.runs
-                    text = "".join(r.text for r in runs)
-                    for key, val in replacements.items():
-                        if key in text:
-                            text = text.replace(key, val)
+                    txt = "".join(r.text for r in runs)
+                    for k, v in reps.items():
+                        if k in txt:
+                            txt = txt.replace(k, v)
                             for r in runs:
                                 r.text = ""
-                            if runs:
-                                runs[0].text = text
+                            runs[0].text = txt
 
 
-st.set_page_config(page_title="UniUni BOL DOCX→PDF", layout="wide")
-st.title("📄→📦 BOL Generator (DOCX→PDF via LibreOffice)")
+st.set_page_config(page_title="DOCX→PDF BOL", layout="wide")
+st.title("📄→📦 UniUni BOL Generator")
 
-ship_date = st.date_input("📅 Enter Ship Date")
-uploaded_excel = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+ship_date = st.date_input("Enter Ship Date")
+uploaded_xl = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 uploaded_docx = st.file_uploader("Upload Word Template (.docx)", type=["docx"])
 
 
-@st.cache_data(show_spinner="⏳ Generating Combined PDF…")
-def generate_combined_pdf(excel_bytes, docx_bytes, ship_date_str):
+@st.cache_data(show_spinner="⏳ Generating PDF…")
+def make_bols(excel_bytes, docx_bytes, ship_date_str):
     df = pd.read_excel(BytesIO(excel_bytes))
     needed = {"Address", "Phone", "Note", "DSP"}
-    missing = needed - set(df.columns)
-    if missing:
-        return None, f"❌ Excel missing columns: {sorted(missing)}"
+    if needed - set(df.columns):
+        return None, f"Missing cols: {needed - set(df.columns)}"
 
-    pdf_paths = []
-    with tempfile.TemporaryDirectory() as tmpdir:
-        total = len(df)
-        # Save template once per run to disk
-        tpl_path = os.path.join(tmpdir, "template.docx")
-        with open(tpl_path, "wb") as f:
+    pdfs = []
+    with tempfile.TemporaryDirectory() as tmp:
+        tpl = os.path.join(tmp, "tpl.docx")
+        with open(tpl, "wb") as f:
             f.write(docx_bytes)
 
-        for idx, row in df.iterrows():
-            seq = idx + 1
-            # load and replace
-            doc = Document(tpl_path)
+        for i, row in df.iterrows():
+            seq = i + 1
+            doc = Document(tpl)
             reps = {
                 "SEA-[pickup address]+TEPHONE+NOTE": f"SEA - {row['Address']} | TEL: {row['Phone']} | Note: {row['Note']}",
                 "UNI-SEA-PICKUP-MM/DD/YYYY-SEQ": f"UNI-SEA-PICKUP-{ship_date_str}-{seq}",
@@ -71,60 +65,50 @@ def generate_combined_pdf(excel_bytes, docx_bytes, ship_date_str):
             }
             replace_all_text(doc, reps)
 
-            # write filled docx
-            out_docx = os.path.join(tmpdir, f"{seq}.docx")
-            out_pdf = out_docx.replace(".docx", ".pdf")
-            doc.save(out_docx)
+            docx_out = os.path.join(tmp, f"{seq}.docx")
+            pdf_out = os.path.join(tmp, f"{seq}.pdf")
+            doc.save(docx_out)
 
-            # convert to PDF via LibreOffice
-            try:
-                subprocess.run(
-                    [
-                        "soffice",
-                        "--headless",
-                        "--convert-to",
-                        "pdf",
-                        out_docx,
-                        "--outdir",
-                        tmpdir,
-                    ],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                )
-            except subprocess.CalledProcessError as e:
-                err = e.stderr.decode("utf-8", errors="ignore")
-                return None, f"❌ Conversion failed on row {seq}: {err}"
-            if not os.path.exists(out_pdf):
-                return None, f"❌ PDF not created for row {seq}"
+            # LibreOffice headless conversion
+            subprocess.run(
+                [
+                    "soffice",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    docx_out,
+                    "--outdir",
+                    tmp,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            if not os.path.exists(pdf_out):
+                return None, f"Conversion failed for row {seq}"
+            pdfs.append(pdf_out)
 
-            pdf_paths.append(out_pdf)
-            st.info(f"✅ Page {seq}/{total} done")
-
-        # merge all PDFs
+        # merge
         merger = PdfMerger()
-        for p in pdf_paths:
+        for p in pdfs:
             merger.append(p)
-        combined = BytesIO()
-        merger.write(combined)
-        merger.close()
-        combined.seek(0)
-        return combined, None
+        buf = BytesIO()
+        merger.write(buf)
+        buf.seek(0)
+        return buf, None
 
 
-if ship_date and uploaded_excel and uploaded_docx:
-    full_str = ship_date.strftime("%m/%d/%Y")
-    if st.button("🚀 Generate Combined PDF"):
-        pdf_bytes, err = generate_combined_pdf(
-            uploaded_excel.read(), uploaded_docx.read(), full_str
-        )
+if ship_date and uploaded_xl and uploaded_docx:
+    date_str = ship_date.strftime("%m/%d/%Y")
+    if st.button("Generate Combined PDF"):
+        pdf_buf, err = make_bols(uploaded_xl.read(), uploaded_docx.read(), date_str)
         if err:
             st.error(err)
         else:
-            st.success("✅ Ready!")
+            st.success("Here you go!")
             st.download_button(
-                "📥 Download All BOLs PDF",
-                data=pdf_bytes,
-                file_name="All_BOLs_Combined.pdf",
+                "Download All BOLs",
+                data=pdf_buf,
+                file_name="All_BOLs.pdf",
                 mime="application/pdf",
             )
