@@ -1,9 +1,14 @@
 import streamlit as st
 import pandas as pd
-import pdfkit
 import os
 from io import BytesIO
 import tempfile
+import pdfkit
+from pdfkit.configuration import Configuration
+
+
+CONFIG = Configuration(wkhtmltopdf="/usr/bin/wkhtmltopdf")
+
 
 st.title("📦 UniUni Combined Bill of Lading PDF Generator (HTML版)")
 
@@ -44,8 +49,12 @@ def generate_combined_pdf(excel_bytes, html_bytes, ship_date_str, ship_date_shor
             output_pdf_path = os.path.join(tmpdir, f"{seq}_{dsp}.pdf")
 
             pdfkit.from_string(
-                filled_html, output_pdf_path, options={"enable-local-file-access": None}
+                filled_html,
+                output_pdf_path,
+                options={"enable-local-file-access": None},
+                configuration=CONFIG,
             )
+
             pdfs.append(output_pdf_path)
 
         # Merge PDFs
