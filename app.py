@@ -7,8 +7,8 @@ import os
 from PyPDF2 import PdfMerger
 
 # 配置 wkhtmltopdf 路径（适用于 Streamlit Cloud）
-WKHTMLTOPDF_PATH = "/usr/bin/wkhtmltopdf"
-CONFIG = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_PATH)
+# WKHTMLTOPDF_PATH = "/usr/bin/wkhtmltopdf"
+# CONFIG = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_PATH)
 
 st.title("📦 UniUni Combined Bill of Lading PDF Generator")
 
