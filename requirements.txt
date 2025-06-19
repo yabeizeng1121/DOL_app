@@ -1,10 +1,6 @@
+
 streamlit
 pandas
-openpyxl
-python-docx
+weasyprint
 PyPDF2
-docx2pdf
-pythoncom
-docx
-io
-tempfile
+openpyxl
