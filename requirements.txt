@@ -1,4 +1,5 @@
 streamlit
 pandas
+pdfkit
 openpyxl
-xhtml2pdf
+PyPDF2
