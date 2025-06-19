@@ -1,6 +1,5 @@
-
 streamlit
 pandas
-weasyprint
+pdfkit
 PyPDF2
 openpyxl
