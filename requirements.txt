@@ -1,4 +1,4 @@
 streamlit
 pandas
-weasyprint
 openpyxl
+xhtml2pdf
